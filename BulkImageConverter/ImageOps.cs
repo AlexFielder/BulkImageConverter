@@ -5,13 +5,13 @@
 */
 
 using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using slade73.Forms;
-
+using MetadataExtractor;
+using ImageProcessor.Imaging.Formats;
+using ImageProcessor;
 
 namespace slade73.Gfx
 {
@@ -132,7 +132,7 @@ namespace slade73.Gfx
                 //Loop through each file of the specified type in the specified directory, and convert it
                 foreach (string fileMask in convertFromFileMasks)
                 {
-                    foreach (string file in Directory.GetFiles(targetDir, fileMask))
+                    foreach (string file in System.IO.Directory.GetFiles(targetDir, fileMask))
                     {
                         newFilename = Path.GetFileNameWithoutExtension(file) + "." + outputExt;
 
@@ -172,21 +172,59 @@ namespace slade73.Gfx
                         }
 
                         //If OnImageConversionStart event is being subscribed to, raise it
-                        if (OnImageConversionStart != null)
-                            OnImageConversionStart(new ImageOpsEventArgs(file));
+                        OnImageConversionStart?.Invoke(new ImageOpsEventArgs(file));
+
+                        //get the metadata from the original file
+                        var gps = ImageMetadataReader.ReadMetadata(file);
+                        
+                        //var gps = ImageMetadataReader.ReadMetadata(path).OfType<GpsDirectory>().FirstOrDefault();
+
+                        byte[] photoBytes = File.ReadAllBytes(file);
+                        // Format is automatically detected though can be changed.
+
+                        ISupportedImageFormat format = GetFormatFromSelectedOutput(convertTo);
+                        Size size = new Size(150, 0);
+
+                        using (MemoryStream inStream = new MemoryStream(photoBytes))
+                        {
+                            using (MemoryStream outStream = new MemoryStream())
+                            {
+                                // Initialize the ImageFactory using the overload to preserve EXIF metadata.
+                                using (ImageFactory imageFactory = new ImageFactory(preserveExifData: true))
+                                {
+                                    // Load, resize, set the format and quality and save an image.
+                                    //imageFactory.Load(inStream).Resize(size).Format(format).Save(outStream);
+                                    imageFactory.Load(inStream).Save(outStream);
+                                    //imageFactory.Load(inStream).Format(format).Save(outStream);
+                                }
+                                // Do something with the stream.
+                                using (Image img = new Bitmap(outStream))
+                                {
+                                    using (Image originalFile = new Bitmap(file))
+                                    {
+                                        foreach (PropertyItem item in originalFile.PropertyItems)
+                                        {
+                                            img.SetPropertyItem(item);
+                                        }
+                                        img.Save(targetDir + "\\" + newFilename, convertTo); 
+                                    }
+                                }
+                            }
+                        }
+
 
                         //Create and save new image file
-                        using (Image img = new Bitmap(file))
-                        {
-                            img.Save(targetDir + "\\" + newFilename, convertTo);
-                        }
+                        //using (Image img = new Bitmap(file))
+                        //{
+
+                        //    img.Save(targetDir + "\\" + newFilename, convertTo);
+                        //}
 
                         //Delete the original image if so specified
                         if (deleteAfterConversion) File.Delete(file);
 
                         //If OnImageConversionComplete event is being subscribed to, raise it
-                        if (OnImageConversionComplete != null)
-                            OnImageConversionComplete(new ImageOpsEventArgs(newFilename));
+                        OnImageConversionComplete?.Invoke(new ImageOpsEventArgs(newFilename));
                     } //foreach file in the directory
 
                 } //foreach filemask
@@ -194,7 +232,7 @@ namespace slade73.Gfx
                 //Including subdirectories?
                 if (includeSubDirs)
                 {
-                    foreach (string subdir in Directory.GetDirectories(targetDir))
+                    foreach (string subdir in System.IO.Directory.GetDirectories(targetDir))
                     {
                         ConvertImages(subdir, true, convertFromFileMasks, convertTo, deleteAfterConversion, filenameAlreadyExistsOpt);
                     }
@@ -205,6 +243,27 @@ namespace slade73.Gfx
                 if (frmExists != null)
                     frmExists.Dispose();
             }
+        }
+
+        private static ISupportedImageFormat GetFormatFromSelectedOutput(ImageFormat convertTo)
+        {
+            ISupportedImageFormat format = null;
+            switch (convertTo.ToString())
+            {
+                case "Jpeg":
+                    format = new JpegFormat { };
+                    break;
+                case "Png":
+                    format = new PngFormat { };
+                    break;
+                case "Tiff":
+                    format = new TiffFormat { };
+                    break;
+                default:
+                    break;
+            }
+            return format;
+            
         }
 
 
